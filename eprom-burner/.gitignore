@@ -1,0 +1,8 @@
+#ignore any eeprom dump file
+*.eep
+#ignore any flashrom dump file
+*.hex
+#ignore objects
+*.o
+#ignore any elf file
+*.elf
