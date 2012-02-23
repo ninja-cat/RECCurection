@@ -15,11 +15,11 @@ Dependencies
 
 Project Goals
 -------------
-* take advantage of rs232 protocol
-* utilize my unused MCU hardware
+* to take advantage of rs232 protocol
+* to utilize my unused MCU hardware
 * ...
-* build mature and solid repro with no crappy glob-top epoxy ICs
-* have sex and fun
+* to build mature and solid repro with no crappy glob-top epoxy ICs
+* to have sex and fun
 
 
 Cheers, アレクス。
