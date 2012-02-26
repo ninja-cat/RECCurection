@@ -15,9 +15,42 @@ MCU = ATMEGA16A
 #define uint unsigned int
 #define uchar unsigned char
 
+#define USART_BAUDRATE 9600 
+#define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1) 
+
 #define CRC16_LEN (2)
 #define PAGE_LEN  (2)
 #define PAGE_SIZE (256)
+
+#define SET_FLG(reg, bit_flag) reg |= (1 << bit_flag)
+#define UNSET_FLG(reg, bit_flag) reg &= ~ (1 << bit_flag)
+
+#define PIN_CE (2)
+#define PIN_OE (3)
+#define PIN_PGM (4)
+
+#define PIN_A16 (5)
+#define PIN_A17 (6)
+#define PIN_A18 (7)
+
+#define SET_CE_HI SET_FLG(PORTD, PIN_CE)
+#define SET_CE_LO UNSET_FLG(PORTD, PIN_CE)
+
+#define SET_OE_HI SET_FLG(PORTD, PIN_OE)
+#define SET_OE_LO UNSET_FLG(PORTD, PIN_OE)
+
+#define SET_PGM_HI SET_FLG(PORTD, PIN_PGM)
+#define SET_PGM_LO UNSET_FLG(PORTD, PIN_PGM)
+
+#define SET_A16_HI SET_FLG(PORTD, PIN_A16)
+#define SET_A16_LO UNSET_FLG(PORTD, PIN_A16)
+
+#define SET_A17_HI SET_FLG(PORTD, PIN_A17)
+#define SET_A17_LO UNSET_FLG(PORTD, PIN_A17)
+
+#define SET_A18_HI SET_FLG(PORTD, PIN_A18)
+#define SET_A18_LO UNSET_FLG(PORTD, PIN_A18)
+
 
 static volatile uchar accepted_cmd;
 static volatile uint max_rx_len, count_rx;
@@ -41,7 +74,7 @@ void _cmd_write(){
     return;
 }
 
-// USART byte received interrupt routine
+// USART byte received interrupt service routine
 ISR (USART_RXC_vect){
 
     uchar data = UDR;
@@ -91,24 +124,40 @@ ISR (USART_RXC_vect){
 }
 
 void _init_ports(){
-    //todo
+    // PORT C is 8bit data input from (EP)ROM
+    PORTC = 0xff;
+    DDRC = 0x00;
+    // PORT A & B are address lines outputs
+    PORTA = 0x00;
+    DDRA = 0xff;
+    PORTB = 0x00;
+    DDRB = 0xff;
+    // these ports cover only 16 address lines, but 27C010 has 17;
+    // first to bits (0,1) of PORT D are ised for usart;
+    PORTD = PORTD & (_BV(0) | _BV(1));
+    // PD2 is #CE
+    // PD3 is #OE
+    // PD4 is #PGM
+    // PD5 is A16
+    // PD6/PD7 reserved for A17/A18, but not used;
+    DDRD |= _BV(7) | _BV(6) | _BV(5) | _BV(4) | _BV(3) | _BV(2);
 }
 
 void _init_usart(){
-    //todo
+    UCSRB |= (1 << RXEN) | (1 << TXEN);   // Turn on the transmission and reception circuitry 
+    UCSRC |= (1 << URSEL) | (1 << UCSZ0) | (1 << UCSZ1); // Use 8-bit character sizes 
+    UBRRH = (BAUD_PRESCALE >> 8); // Load upper 8-bits of the baud rate value into the high byte of the UBRR register 
+    UBRRL = BAUD_PRESCALE; // Load lower 8-bits of the baud rate value into the low byte of the UBRR register 
 }
 
-int main(void) {
+int main(void){
 
 	cli();
 	wdt_disable();
-
-	PORTB= _BV(PB6) | _BV(PB7);
-	DDRB=PORTB ^ 0xFF;
-
-	PORTD= _BV(PD5);
-	DDRD=PORTD ^ 0xFF;
-
+    
+    _init_usart();
+    _init_ports();
+   
 	MCUCR=0x00;
 
 	ACSR=0x80;
@@ -117,7 +166,7 @@ int main(void) {
 	
 	sei();
 
-	for(;;) {
+	for(;;){
 		sleep_mode();
 	};
 	return 0;
