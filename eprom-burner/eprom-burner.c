@@ -136,8 +136,11 @@ void _init_ports(){
     // first to bits (0,1) of PORT D are ised for usart;
     PORTD = PORTD & (_BV(0) | _BV(1));
     // PD2 is #CE
+    SET_CE_HI;
     // PD3 is #OE
+    SET_OE_HI;
     // PD4 is #PGM
+    SET_PGM_HI;
     // PD5 is A16
     // PD6/PD7 reserved for A17/A18, but not used;
     DDRD |= _BV(7) | _BV(6) | _BV(5) | _BV(4) | _BV(3) | _BV(2);
