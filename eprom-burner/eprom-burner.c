@@ -10,6 +10,7 @@ MCU = ATMEGA16A
 #include <util/crc16.h>
 #include <avr/sleep.h>
 #include <avr/wdt.h>
+#include <avr/pgmspace.h>
 #include <string.h>
 
 #define uint unsigned int
@@ -51,6 +52,7 @@ MCU = ATMEGA16A
 #define SET_A18_HI SET_FLG(PORTD, PIN_A18)
 #define SET_A18_LO UNSET_FLG(PORTD, PIN_A18)
 
+uchar ident[] PROGMEM = "RECCurection eprom-burner backend v0.1\0";
 
 static volatile uchar accepted_cmd;
 static volatile uint max_rx_len, count_rx;
@@ -59,9 +61,25 @@ void (*run_cmd)();
 
 uchar rx_buf[PAGE_LEN + PAGE_SIZE + CRC16_LEN];
 
+void _send_byte(uchar data){
+    while ((UCSRA & (1 << UDRE)) == 0){
+    };
+    UDR = data;
+}
+
 void _cmd_identify(){
+    uchar tmp;
+    uchar i;
     // send ident string
-    return;
+    for (i = 0; ; i ++){
+        tmp = pgm_read_byte(&ident[i]);
+        if (!tmp) {
+            break;
+        }
+        _send_byte(tmp);
+    }
+    _send_byte(rx_buf[0]);
+    _send_byte(rx_buf[1]);
 }
 
 void _cmd_read(){
@@ -119,6 +137,7 @@ ISR (USART_RXC_vect){
             // all data was received
             // execute command
             run_cmd();
+            accepted_cmd = 0;
         }
     }
 }
@@ -148,6 +167,7 @@ void _init_ports(){
 
 void _init_usart(){
     UCSRB |= (1 << RXEN) | (1 << TXEN);   // Turn on the transmission and reception circuitry 
+    UCSRB |= (1 << RXCIE); // Enable the USART Recieve Complete interrupt (USART_RXC) 
     UCSRC |= (1 << URSEL) | (1 << UCSZ0) | (1 << UCSZ1); // Use 8-bit character sizes 
     UBRRH = (BAUD_PRESCALE >> 8); // Load upper 8-bits of the baud rate value into the high byte of the UBRR register 
     UBRRL = BAUD_PRESCALE; // Load lower 8-bits of the baud rate value into the low byte of the UBRR register 
