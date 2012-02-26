@@ -7,7 +7,7 @@ PROJECT = eprom-burner
 MCU = atmega16
 TARGET = eprom-burner.elf
 CC = avr-gcc
-CPU = 3686400
+CPU = 8000000
 
 ## Options common to compile, link and assembly rules
 COMMON = -mmcu=$(MCU)
