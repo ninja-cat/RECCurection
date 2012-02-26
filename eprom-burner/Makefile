@@ -14,7 +14,7 @@ COMMON = -mmcu=$(MCU)
 
 ## Compile options common for all C compilation units.
 CFLAGS = $(COMMON)
-CFLAGS += -Wall -gdwarf-2 -O2 -DF_CPU=$(CPU)UL --combine -fwhole-program -ffunction-sections -fdata-sections -Wl,--relax,--gc-sections
+CFLAGS += -Wall -gdwarf-2 -Os -DF_CPU=$(CPU)UL --combine -fwhole-program -ffunction-sections -fdata-sections -Wl,--relax,--gc-sections
 CFLAGS += -Wp,-M,-MP,-MT,$(*F).o
 
 ## Assembly specific flags
