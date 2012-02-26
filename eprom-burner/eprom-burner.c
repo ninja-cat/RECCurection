@@ -175,22 +175,22 @@ void _init_usart(){
 
 int main(void){
 
-	cli();
-	wdt_disable();
+    cli();
+    wdt_disable();
     
     _init_usart();
     _init_ports();
    
-	MCUCR=0x00;
+    MCUCR=0x00;
 
-	ACSR=0x80;
+    ACSR=0x80;
 
-	set_sleep_mode(SLEEP_MODE_IDLE);
-	
-	sei();
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    
+    sei();
 
-	for(;;){
-		sleep_mode();
-	};
-	return 0;
+    for(;;){
+        sleep_mode();
+    };
+    return 0;
 }
