@@ -6,3 +6,5 @@
 *.o
 #ignore any elf file
 *.elf
+#asm output
+*.s
