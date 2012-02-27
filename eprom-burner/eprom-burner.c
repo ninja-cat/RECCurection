@@ -70,6 +70,7 @@ void _send_byte(uchar data){
 void _cmd_identify(){
     uchar tmp;
     uchar i;
+    uint crc = 0xffff;
     // send ident string
     for (i = 0; ; i ++){
         tmp = pgm_read_byte(&ident[i]);
@@ -77,9 +78,12 @@ void _cmd_identify(){
             break;
         }
         _send_byte(tmp);
+        crc = _crc16_update(crc, tmp);
     }
-    _send_byte(rx_buf[0]);
-    _send_byte(rx_buf[1]);
+    uchar *arr = &crc;
+    // send crc16
+    _send_byte(arr[0]);
+    _send_byte(arr[1]);
 }
 
 void _cmd_read(){
