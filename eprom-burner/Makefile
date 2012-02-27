@@ -44,6 +44,8 @@ all: $(TARGET) eprom-burner.hex eprom-burner.eep
 eprom-burner.o: eprom-burner.c
 	$(CC) $(INCLUDES) $(CFLAGS) -c  $<
 
+asm: 
+	$(CC) $(INCLUDES) $(CFLAGS) -S  $<
 ##Link
 $(TARGET): $(OBJECTS)
 	 $(CC) $(LDFLAGS) $(OBJECTS) $(LIBDIRS) $(LIBS) -o $(TARGET)
