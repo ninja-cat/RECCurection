@@ -62,5 +62,5 @@ $(TARGET): $(OBJECTS)
 ## Clean target
 .PHONY: clean
 clean:
-	-rm -rf $(OBJECTS) eprom-burner.elf eprom-burner.hex eprom-burner.eep
+	-rm -rf $(OBJECTS) eprom-burner.elf eprom-burner.hex eprom-burner.eep eprom-burner.s
 

@@ -16,6 +16,8 @@ MCU = ATMEGA16A
 #define uint unsigned int
 #define uchar unsigned char
 
+#define nop() asm volatile ("nop")
+
 #define USART_BAUDRATE 9600 
 #define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1) 
 
@@ -80,15 +82,66 @@ void _cmd_identify(){
         _send_byte(tmp);
         crc = _crc16_update(crc, tmp);
     }
-    uchar *arr = &crc;
     // send crc16
-    _send_byte(arr[0]);
-    _send_byte(arr[1]);
+    _send_byte( ((char *) &crc)[0]);
+    _send_byte( ((char *) &crc)[1]);
 }
 
 void _cmd_read(){
     // read (ep)rom page
-    return;
+    uchar data;
+    uchar i;
+    uchar page_l = rx_buf[0];
+    uchar page_h = rx_buf[1];
+    uint crc_a = *(uint *) &rx_buf[2];
+    uint crc_r = 0xffff;
+    SET_CE_HI;
+    SET_OE_HI;
+    memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
+    // set A8-A15
+    PORTB = page_l;
+    if (page_h & 1){
+        SET_A16_HI;
+    } else {
+        SET_A16_LO;
+    }
+    if (page_h & _BV(1)){
+        SET_A17_HI;
+    } else {
+        SET_A17_LO;
+    }
+    if (page_h & _BV(2)){
+        SET_A18_HI;
+    } else {
+        SET_A18_LO;
+    }
+    // read the memory page
+    for (i = 0; ; i ++){
+        // set A0-A7
+        PORTA = i;
+        nop();
+        SET_CE_LO;
+        SET_OE_LO;
+        nop();
+        nop();
+        rx_buf[i] = PINC;
+        SET_OE_HI;
+        SET_CE_HI;
+        crc_r = _crc16_update(crc_r, rx_buf[i]);
+        if (i == 0xff){
+            break;
+        }
+    }
+    // send the memory page
+    for (i = 0; ; i ++){
+        _send_byte(rx_buf[i]);
+        if (i == 0xff){
+            break;
+        }
+    }
+    _send_byte( ((char *) &crc_r)[0]);
+    _send_byte( ((char *) &crc_r)[1]);
+    //return;
 }
 
 void _cmd_write(){
@@ -147,8 +200,8 @@ ISR (USART_RXC_vect){
 }
 
 void _init_ports(){
-    // PORT C is 8bit data input from (EP)ROM
-    PORTC = 0xff;
+    // PORT C is 8bit data input from (EP)ROM, switch to hi-Z state
+    PORTC = 0x00;
     DDRC = 0x00;
     // PORT A & B are address lines outputs
     PORTA = 0x00;
@@ -185,10 +238,6 @@ int main(void){
     _init_usart();
     _init_ports();
    
-    MCUCR=0x00;
-
-    ACSR=0x80;
-
     set_sleep_mode(SLEEP_MODE_IDLE);
     
     sei();
