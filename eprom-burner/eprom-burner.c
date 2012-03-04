@@ -149,6 +149,40 @@ void _cmd_write(){
     return;
 }
 
+int _is_crc_correct(){
+    // perform checksum check
+    uint crc = 0xffff;
+    uint received_crc = * (uint *) &rx_buf[max_rx_len - CRC16_LEN];
+    uint i;
+    // ugly hack;
+    switch (max_rx_len){
+        case 2:
+            crc = _crc16_update(crc, 'i');
+            break;
+        case 4:
+            crc = _crc16_update(crc, 'r');
+            break;
+        case 260:
+            crc = _crc16_update(crc, 'w');
+            break;
+    }
+    for (i = 0; i < max_rx_len - CRC16_LEN; ++ i){
+        crc = _crc16_update(crc, rx_buf[i]);
+    }
+    if (crc != received_crc){
+        _send_byte('e');
+        _send_byte( ((char *) & crc)[0]);
+        _send_byte( ((char *) & crc)[1]);
+        return -1;
+    } else {
+        _send_byte('a');
+        _send_byte(0x7e);
+        _send_byte(0xa8);
+        return 0;
+    }
+    
+}
+
 // USART byte received interrupt service routine
 ISR (USART_RXC_vect){
 
@@ -192,8 +226,10 @@ ISR (USART_RXC_vect){
         count_rx ++;
         if (count_rx == max_rx_len) {
             // all data was received
-            // execute command
-            run_cmd();
+            // execute command if crc is correct
+            if (! _is_crc_correct()){
+                run_cmd();
+            }
             accepted_cmd = 0;
         }
     }
