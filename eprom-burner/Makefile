@@ -4,27 +4,24 @@
 
 ## General Flags
 PROJECT = eprom-burner
-MCU = atmega16
+MCU = atmega32
 TARGET = eprom-burner.elf
 CC = avr-gcc
-CPU = 8000000
-
+CPU_CLK = 8000000
+USART_BAUDRATE = 38400
 ## Options common to compile, link and assembly rules
 COMMON = -mmcu=$(MCU)
-
+GCC_OPTIMISATION_LEVEL = -Os
 ## Compile options common for all C compilation units.
 CFLAGS = $(COMMON)
-CFLAGS += -Wall -gdwarf-2 -Os -DF_CPU=$(CPU)UL --combine -fwhole-program -ffunction-sections -fdata-sections -Wl,--relax,--gc-sections
+CFLAGS += -DF_CPU=$(CPU_CLK)UL
+CFLAGS += -DUSART_BAUDRATE=$(USART_BAUDRATE)UL
+CFLAGS += $(GCC_OPTIMISATION_LEVEL)
+CFLAGS += -Wall -gdwarf-2 --combine -fwhole-program -ffunction-sections -fdata-sections -Wl,--relax,--gc-sections
 CFLAGS += -Wp,-M,-MP,-MT,$(*F).o
-
-## Assembly specific flags
-ASMFLAGS = $(COMMON)
-ASMFLAGS += -x assembler-with-cpp -Wa,-gdwarf2
 
 ## Linker flags
 LDFLAGS = $(COMMON)
-LDFLAGS += 
-
 
 ## Intel Hex file production flags
 HEX_FLASH_FLAGS = -R .eeprom

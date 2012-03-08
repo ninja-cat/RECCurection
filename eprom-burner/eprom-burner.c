@@ -1,7 +1,7 @@
 /*****************************************************
 Project : eprom-burner
-Q = 3.6864MHz
-MCU = ATMEGA16A
+Q = 8.000MHz
+MCU = ATMEGA32A
 *****************************************************/
 
 #include <avr/io.h>
@@ -18,7 +18,6 @@ MCU = ATMEGA16A
 
 #define nop() asm volatile ("nop")
 
-#define USART_BAUDRATE 38400
 #define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1) 
 
 #define CRC16_LEN (2)
@@ -54,10 +53,12 @@ MCU = ATMEGA16A
 #define SET_A18_HI SET_FLG(PORTD, PIN_A18)
 #define SET_A18_LO UNSET_FLG(PORTD, PIN_A18)
 
-uchar ident[] PROGMEM = "RECCurection eprom-burner backend v0.1\0";
+uchar ident[] PROGMEM = "RECCurection eprom-burner backend v0.1";
 
-static volatile uchar accepted_cmd;
-static volatile uint max_rx_len, count_rx;
+static uchar accepted_cmd;
+static uint max_rx_len;
+static uint count_rx;
+static uint computed_crc;
 
 void (*run_cmd)();
 
@@ -89,11 +90,9 @@ void _cmd_identify(){
 
 void _cmd_read(){
     // read (ep)rom page
-    uchar data;
     uchar i;
     uchar page_l = rx_buf[0];
     uchar page_h = rx_buf[1];
-    uint crc_a = *(uint *) &rx_buf[2];
     uint crc_r = 0xffff;
     SET_CE_HI;
     SET_OE_HI;
@@ -151,28 +150,15 @@ void _cmd_write(){
 
 int _is_crc_correct(){
     // perform checksum check
-    uint crc = 0xffff;
     uint received_crc = * (uint *) &rx_buf[max_rx_len - CRC16_LEN];
     uint i;
-    // ugly hack;
-    switch (max_rx_len){
-        case 2:
-            crc = _crc16_update(crc, 'i');
-            break;
-        case 4:
-            crc = _crc16_update(crc, 'r');
-            break;
-        case 260:
-            crc = _crc16_update(crc, 'w');
-            break;
-    }
     for (i = 0; i < max_rx_len - CRC16_LEN; ++ i){
-        crc = _crc16_update(crc, rx_buf[i]);
+        computed_crc = _crc16_update(computed_crc, rx_buf[i]);
     }
-    if (crc != received_crc){
+    if (computed_crc != received_crc){
         _send_byte('e');
-        _send_byte( ((char *) & crc)[0]);
-        _send_byte( ((char *) & crc)[1]);
+        _send_byte( ((char *) & computed_crc)[0]);
+        _send_byte( ((char *) & computed_crc)[1]);
         return -1;
     } else {
         _send_byte('a');
@@ -180,7 +166,6 @@ int _is_crc_correct(){
         _send_byte(0xa8);
         return 0;
     }
-    
 }
 
 // USART byte received interrupt service routine
@@ -218,7 +203,9 @@ ISR (USART_RXC_vect){
             default:
                 accepted_cmd = 0;
                 break;            
-        }
+        };
+        computed_crc = 0xffff;
+        computed_crc = _crc16_update(computed_crc, data);
     } else {
         // cmd was already accepted
         // read cmd params and data
