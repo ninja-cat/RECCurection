@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import sys
+from time import sleep as sleep
 
 import serial
 
@@ -48,52 +48,73 @@ def crc16_calc(data):
     return chr(crc & 0xFF) + chr(crc >> 8)
 
 
-def chech_backend(serial_port):
-    cmd = 'i'
+def send_cmd(serial_port, cmd, cmd_name, ack_size, data_size):
     cmd_crc = crc16_calc(cmd)
     serial_port.write(cmd)
     serial_port.write(cmd_crc)
-    respons = serial_port.read(3)
+    respons = serial_port.read(ack_size)
     if not respons:
-        return "not_connected"
+        return ("not_connected", )
     if respons[0] == 'a':
         # command was accepted
-        print "backend accepted identify command"
+        print "backend accepted %s command" % cmd_name
         if crc16_calc('a') == respons[-2:]:
-            print "crc16 is correct"
-            ident = serial_port.read(40)
-            if not ident:
-                return "not_ready"
-            elif len(ident) == 40:
-                print "ident =", ident[:-2]
-                if crc16_calc(ident[:-2]) == ident[-2:]:
-                    print "crc16 is correct"
-                    return "ready"
+            rx_data = serial_port.read(data_size)
+            if not rx_data:
+                return ("not_ready", )
+            elif len(rx_data) == data_size:
+                print "rx_data =", rx_data[:-2]
+                if crc16_calc(rx_data[:-2]) == rx_data[-2:]:
+                    return ("ready", rx_data[:-2])
                 else:
-                    return "not_ready"
+                    return ("not_ready", )
         else:
-            return "bad_crc_received_from_backend"
+            return ("bad_crc_received_from_backend", )
     elif respons[0] == 'e':
         # bad_crc
         print "bad crc transmitted to backend"
-        return "bad_crc_transmitted"
+        return ("bad_crc_transmitted", )
     else:
         print "unacceptable reply is received"
         print "check the device connectivity and backend version"
-        return "bad_device"
+        return ("bad_device", )
+
+
+def send_ident(serial_port):
+    cmd = 'i'
+    cmd += crc16_calc(cmd)
+    return send_cmd(serial_port, cmd, "identify", 3, 40)
+
+
+def send_read_page(serial_port, page):
+    cmd = 'r'
+    cmd += chr(page & 0xFF) + chr(page >> 8)
+    cmd += crc16_calc(cmd)
+    return send_cmd(serial_port, cmd, "read %d page" % page, 3, 256 + 2)
+
+
+def send_write_page(serial_port, page, data):
+    cmd = 'w'
+    cmd += chr(page & 0xFF) + chr(page >> 8)
+    cmd += data
+    cmd += crc16_calc(cmd)
+    return send_cmd(serial_port, cmd, "write %d page" % page, 3, 4 + 2)
 
 
 if __name__ == "__main__":
 
     ser = serial.Serial(port='/dev/ttyS0', baudrate=38400, bytesize=8,
-                        parity='N', stopbits=1, timeout=0.15,
+                        parity='N', stopbits=1, timeout=0.05,
                         xonxoff=0, rtscts=0)
 
-    status = chech_backend(ser)
+    status = send_ident(ser)
 
-    if status is not "ready":
+    if status[0] is not "ready":
         print "backend is not ready for operating, exitting now"
-        print "returned status =", status
-        sys.exit(-1)
+        print "returned status =", status[0]
+        exit(-1)
     else:
         print "backend is ready!"
+    for page in xrange(0, 512, 1):
+        status = send_read_page(ser, page)
+        print status
