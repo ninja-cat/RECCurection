@@ -88,18 +88,10 @@ void _cmd_identify(){
     _send_byte( ((char *) &crc)[1]);
 }
 
-void _cmd_read(){
-    // read (ep)rom page
-    uchar i;
-    uchar page_l = rx_buf[0];
-    uchar page_h = rx_buf[1];
-    uint crc_r = 0xffff;
-    SET_CE_LO;
-    SET_OE_HI;
-    memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
-    // set A8-A15
+void _set_addr_hi(uchar page_l, uchar page_h){
+    // set A8-A15(A18)
     PORTB = page_l;
-    if (page_h & 1){
+    if (page_h & _BV(0)){
         SET_A16_HI;
     } else {
         SET_A16_LO;
@@ -114,6 +106,16 @@ void _cmd_read(){
     } else {
         SET_A18_LO;
     }
+}
+
+void _cmd_read(){
+    // read (ep)rom page
+    uchar i;
+    uint crc_r = 0xffff;
+    SET_CE_LO;
+    SET_OE_HI;
+    _set_addr_hi(rx_buf[0], rx_buf[1]);
+    memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
     // read the memory page
     for (i = 0; ; i ++){
         // set A0-A7
@@ -137,12 +139,41 @@ void _cmd_read(){
     }
     _send_byte( ((char *) &crc_r)[0]);
     _send_byte( ((char *) &crc_r)[1]);
-    //return;
 }
 
 void _cmd_write(){
     // write eprom page
-    return;
+    uchar i;
+    uint crc_r = 0xffff;
+    uchar *page_buf = rx_buf + 2;
+    SET_CE_HI;
+    SET_OE_HI;
+    SET_PGM_HI;
+    _set_addr_hi(rx_buf[0], rx_buf[1]);
+    DDRC = 0xff;
+    for (i = 0; ; i ++){
+        // set A0-A7
+        PORTA = i;
+        PORTC = page_buf[i];
+        SET_CE_LO;
+        _delay_us(1);    
+        SET_PGM_LO;
+        _delay_us(100);
+        SET_PGM_HI;    
+        if (i == 0xff){
+            SET_CE_HI;
+            break;
+        }
+    }
+    PORTC = 0x00;
+    DDRC = 0x00;
+    uchar reply[] = "done";
+    for (i = 0; i < 4; i ++){
+        _send_byte(reply[i]);
+        crc_r = _crc16_update(crc_r, reply[i]);
+    }
+    _send_byte( ((char *) &crc_r)[0]);
+    _send_byte( ((char *) &crc_r)[1]);
 }
 
 int _is_crc_correct(){
