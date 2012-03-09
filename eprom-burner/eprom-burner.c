@@ -94,7 +94,7 @@ void _cmd_read(){
     uchar page_l = rx_buf[0];
     uchar page_h = rx_buf[1];
     uint crc_r = 0xffff;
-    SET_CE_HI;
+    SET_CE_LO;
     SET_OE_HI;
     memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
     // set A8-A15
@@ -118,16 +118,13 @@ void _cmd_read(){
     for (i = 0; ; i ++){
         // set A0-A7
         PORTA = i;
-        nop();
-        SET_CE_LO;
         SET_OE_LO;
-        nop();
-        nop();
+        _delay_us(1);    
         rx_buf[i] = PINC;
         SET_OE_HI;
-        SET_CE_HI;
         crc_r = _crc16_update(crc_r, rx_buf[i]);
         if (i == 0xff){
+            SET_CE_HI;
             break;
         }
     }
