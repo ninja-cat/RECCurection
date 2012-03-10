@@ -1,10 +1,15 @@
 #!/usr/bin/python
 
-from time import sleep as sleep
+from time import sleep
+from datetime import datetime
+import argparse
+import os
+
 
 import serial
 
 
+_acceptable_commands = ('dump', 'burn', 'check')
 _crc16_table = (
     0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
     0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
@@ -63,7 +68,6 @@ def send_cmd(serial_port, cmd, cmd_name, ack_size, data_size):
             if not rx_data:
                 return ("not_ready", )
             elif len(rx_data) == data_size:
-                print "rx_data =", rx_data[:-2]
                 if crc16_calc(rx_data[:-2]) == rx_data[-2:]:
                     return ("ready", rx_data[:-2])
                 else:
@@ -100,21 +104,80 @@ def send_write_page(serial_port, page, data):
     cmd += crc16_calc(cmd)
     return send_cmd(serial_port, cmd, "write %d page" % page, 3, 4 + 2)
 
+def get_argparser():
+    parser = argparse.ArgumentParser(
+            description='EPROM dumper/burner CLI frontend tool',
+            epilog='this is the part of RECCurection project, '
+                   'check it out at http://github.com/ninja-cat/RECCurection')
+    parser.add_argument('command',
+                        help='a command is being sent to backend')
+    parser.add_argument('-O', dest='outfile', nargs='?',
+                        help='an output file')
+    parser.add_argument('-i', dest='infile', nargs='?',
+                        help='an input file')
+    parser.add_argument('-s', dest='size', nargs='?',
+                        default=1024,
+                        help='a rom size in kbits. E.g. 256 for 27c256')
+    parser.add_argument('-p', dest='serial_name', nargs='?',
+                        default='/dev/ttyS0',
+                        help='a serial port. E.g. /dev/ttyS0')
+    parser.add_argument('-b', dest='baudrate', nargs='?',
+                        default=38400,
+                        help='USART baud rate. E.g. 38400')
+
+    return parser
+
 
 if __name__ == "__main__":
 
-    ser = serial.Serial(port='/dev/ttyS0', baudrate=38400, bytesize=8,
-                        parity='N', stopbits=1, timeout=0.05,
+    args = get_argparser().parse_args()
+
+    print args 
+    try:
+        ser = serial.Serial(port=args.serial_name,
+                        baudrate=args.baudrate, bytesize=8,
+                        parity='N', stopbits=1, timeout=0.5,
                         xonxoff=0, rtscts=0)
 
-    status = send_ident(ser)
-
-    if status[0] is not "ready":
-        print "backend is not ready for operating, exitting now"
-        print "returned status =", status[0]
+        if args.command not in _acceptable_commands:
+            raise Exception('acceptable commands are:\n'
+                            '%s' % ("\n".join(_acceptable_commands)))
+        elif args.command == "check":
+            status = send_ident(ser)
+            if status[0] is not "ready":
+                print "backend is not ready for operating, exitting now"
+                print "returned status =", status[0]
+                raise Exception("backend is not ready, "
+                                    "aborting operation")
+            else:
+                print "backend is ready!"
+        elif args.command == "dump":
+            f_name = args.outfile
+            if not args.outfile:
+                f_name = datetime.now().isoformat() + ".dump"
+            with open(f_name, "wb") as f:
+                for page in xrange(0, args.size / 2, 1):
+                    status = send_read_page(ser, page)
+                    if status[0] is not "ready":
+                        raise Exception("backend is not ready, "
+                                            "aborting operation")
+                    f.write(status[1])
+            print "successfully dumped %d bytes to %s file" % (args.size * 128, f_name)
+        elif args.command == "burn":
+            f_name = args.infile
+            if not args.infile:
+                raise Exception("input file is not specified, use \'-i\' option")
+            if args.size * 128 != os.path.getsize(f_name):
+                raise Exception("input file and rom size mismatch! "
+                                "file size = %d, rom size = %d" % (os.path.getsize(fname), args.size * 128))
+            with open(f_name, "rb") as f:
+                for page in xrange(0, args.size / 2, 1):
+                    f_data = f.read(256)
+                    status = send_write_page(ser, page, f_data)
+                    if status[0] is not "ready":
+                        raise Exception("backend is not ready, "
+                                            "aborting operation")
+            print "successfully burnt %d bytes from %s file to eprom" % (args.size * 128, f_name)
+    except Exception as e:
+        print e
         exit(-1)
-    else:
-        print "backend is ready!"
-    for page in xrange(0, 512, 1):
-        status = send_read_page(ser, page)
-        print status
