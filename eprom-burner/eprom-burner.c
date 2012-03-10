@@ -156,7 +156,7 @@ void _cmd_write(){
         PORTA = i;
         PORTC = page_buf[i];
         SET_CE_LO;
-        _delay_us(1);    
+        _delay_us(5);    
         SET_PGM_LO;
         _delay_us(100);
         SET_PGM_HI;    
