@@ -61,7 +61,7 @@ if __name__ == "__main__":
             with open(prg_filename, "wb") as prg_f:
                 prg_f.write(prg_rom)
             with open(chr_filename, "wb") as chr_f:
-                chr_f.write(prg_rom)
+                chr_f.write(chr_rom)
 
     except Exception as e:
         print e
