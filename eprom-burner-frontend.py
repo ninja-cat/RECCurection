@@ -115,13 +115,13 @@ def get_argparser():
                         help='an output file')
     parser.add_argument('-i', dest='infile', nargs='?',
                         help='an input file')
-    parser.add_argument('-s', dest='size', nargs='?',
+    parser.add_argument('-s', dest='size', nargs='?', type=int,
                         default=1024,
                         help='a rom size in kbits. E.g. 256 for 27c256')
     parser.add_argument('-p', dest='serial_name', nargs='?',
                         default='/dev/ttyS0',
                         help='a serial port. E.g. /dev/ttyS0')
-    parser.add_argument('-b', dest='baudrate', nargs='?',
+    parser.add_argument('-b', dest='baudrate', nargs='?', type=int,
                         default=38400,
                         help='USART baud rate. E.g. 38400')
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
                 raise Exception("input file is not specified, use \'-i\' option")
             if args.size * 128 != os.path.getsize(f_name):
                 raise Exception("input file and rom size mismatch! "
-                                "file size = %d, rom size = %d" % (os.path.getsize(fname), args.size * 128))
+                                "file size = %d, rom size = %d" % (os.path.getsize(f_name), args.size * 128))
             with open(f_name, "rb") as f:
                 for page in xrange(0, args.size / 2, 1):
                     f_data = f.read(256)
