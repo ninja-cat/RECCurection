@@ -1,6 +1,5 @@
 #!/usr/bin/python
 
-from time import sleep
 from datetime import datetime
 import argparse
 import os
@@ -9,7 +8,7 @@ import os
 import serial
 
 
-_acceptable_commands = ('dump', 'burn', 'check')
+_acceptable_commands = ('dump', 'burn', 'check', 'fdump')
 _crc16_table = (
     0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
     0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
@@ -53,48 +52,87 @@ def crc16_calc(data):
     return chr(crc & 0xFF) + chr(crc >> 8)
 
 
-def send_cmd(serial_port, cmd, cmd_name, ack_size, data_size):
-    cmd_crc = crc16_calc(cmd)
-    serial_port.write(cmd)
-    serial_port.write(cmd_crc)
-    respons = serial_port.read(ack_size)
-    if not respons:
-        return ("not_connected", )
+
+class MyException(Exception):
+    def __str__(self):
+        pass
+
+class NoResponseError(MyException):
+    def __str__(self):
+        return repr("Timeout: no response from backend") 
+
+class NotEnoughDataReceived(MyException):
+    def __str__(self):
+        return repr("Received data length differs from expected") 
+
+class CorruptedDataReceived(MyException):
+    def __str__(self):
+        return repr("Corrupted data received") 
+
+class CorruptedDataTransmitted(MyException):
+    def __str__(self):
+        return repr("Corrupted data transmitted") 
+
+class UnacceptableReply(MyException):
+    def __str__(self):
+        return repr("Unacceptable reply from backend") 
+
+
+def port_read(port, len_t):
+    response = port.read(len_t)
+    if not response:
+        raise NoResponseError()
+    if len(response) != len_t:
+        raise NotEnoughDataReceived()
+    if crc16_calc(response[:-2]) != response[-2:]:
+        raise CorruptedDataReceived()
+    return response
+
+
+def port_write(port, data):
+    port.write(data)
+
+
+def send_cmd(ser, cmd, cmd_name, data_size, ack_size=3):
+    port_write(ser, cmd)
+    respons = port_read(ser, ack_size)
     if respons[0] == 'a':
         # command was accepted
         print "backend accepted %s command" % cmd_name
-        if crc16_calc('a') == respons[-2:]:
-            rx_data = serial_port.read(data_size)
-            if not rx_data:
-                return ("not_ready", )
-            elif len(rx_data) == data_size:
-                if crc16_calc(rx_data[:-2]) == rx_data[-2:]:
-                    return ("ready", rx_data[:-2])
-                else:
-                    return ("not_ready", )
-        else:
-            return ("bad_crc_received_from_backend", )
+        return port_read(ser, data_size)[:-2]
     elif respons[0] == 'e':
         # bad_crc
         print "bad crc transmitted to backend"
-        return ("bad_crc_transmitted", )
+        raise CorruptedDataTransmitted()
     else:
-        print "unacceptable reply is received"
         print "check the device connectivity and backend version"
-        return ("bad_device", )
+        raise UnacceptableReply()
 
+def format_cmd(cmd):
+    # cmd {'opcode': XX, 'param': YY, 'data': ZZ}
+    data = cmd['opcode']
+    if 'param' in cmd:
+        data += cmd['param']
+    if 'page' in cmd:
+        data += chr(cmd['page'] & 0xFF) + chr(cmd['page'] >> 8)
+    if 'data' in cmd:
+        data += cmd['data']
+    data += crc16_calc(data)
+    cmd['raw_data'] = data
+    return cmd
 
 def send_ident(serial_port):
-    cmd = 'i'
-    cmd += crc16_calc(cmd)
-    return send_cmd(serial_port, cmd, "identify", 3, 40)
+    cmd = {'opcode': 'i', 'resp_len': 40}
+    cmd = format_cmd(cmd)
+    return send_cmd(serial_port, cmd['raw_data'], "identify", cmd['resp_len'])
 
 
-def send_read_page(serial_port, page):
-    cmd = 'r'
-    cmd += chr(page & 0xFF) + chr(page >> 8)
-    cmd += crc16_calc(cmd)
-    return send_cmd(serial_port, cmd, "read %d page" % page, 3, 256 + 2)
+def send_read_page(serial_port, page, fastdump=None):
+    cmd = {'opcode':'r', 'resp_len': 256 + 2, 'page': page}
+    if fastdump:
+        cmd['opcode'] = 'f'
+    cmd = format_cmd(cmd)
+    return send_cmd(serial_port, cmd['raw_data'], "read %d page" % page, cmd['resp_len'])
 
 
 def send_write_page(serial_port, page, data):
@@ -102,30 +140,43 @@ def send_write_page(serial_port, page, data):
     cmd += chr(page & 0xFF) + chr(page >> 8)
     cmd += data
     cmd += crc16_calc(cmd)
-    return send_cmd(serial_port, cmd, "write %d page" % page, 3, 4 + 2)
+    return send_cmd(serial_port, cmd, "write %d page" % page, 4 + 2)
 
 def get_argparser():
     parser = argparse.ArgumentParser(
             description='EPROM dumper/burner CLI frontend tool',
-            epilog='this is the part of RECCurection project, '
-                   'check it out at http://github.com/ninja-cat/RECCurection')
+            epilog='http://github.com/ninja-cat/RECCurection')
     parser.add_argument('command',
-                        help='a command is being sent to backend')
+                        help='command to send: [%s]' % ", ".join(_acceptable_commands))
     parser.add_argument('-O', dest='outfile', nargs='?',
-                        help='an output file')
+                        help='output file')
     parser.add_argument('-i', dest='infile', nargs='?',
-                        help='an input file')
+                        help='input file')
     parser.add_argument('-s', dest='size', nargs='?', type=int,
                         default=1024,
-                        help='a rom size in kbits. E.g. 256 for 27c256')
+                        help='rom size in kbits. E.g. 256 for 27c256')
     parser.add_argument('-p', dest='serial_name', nargs='?',
                         default='/dev/ttyS0',
-                        help='a serial port. E.g. /dev/ttyS0')
+                        help='serial port. E.g. /dev/ttyS0')
     parser.add_argument('-b', dest='baudrate', nargs='?', type=int,
                         default=38400,
                         help='USART baud rate. E.g. 38400')
 
     return parser
+
+
+def exec_check(**kwargs):
+    send_ident(kwargs['port'])
+    print "backend is ready!"
+
+def exec_fdump(**kwargs):
+    args = kwargs['args']
+    args.size = 256
+    f_name = args.outfile
+    with open(f_name, "wb") as f:
+        for page in xrange(0, args.size / 2, 1):
+            f.write(send_read_page(ser, page, fastdump=True))
+    print "FDUMP: successfully dumped %d bytes to %s file" % (os.path.getsize(f_name), f_name)
 
 
 if __name__ == "__main__":
@@ -138,30 +189,25 @@ if __name__ == "__main__":
                         baudrate=args.baudrate, bytesize=8,
                         parity='N', stopbits=1, timeout=0.5,
                         xonxoff=0, rtscts=0)
-
         if args.command not in _acceptable_commands:
             raise Exception('acceptable commands are:\n'
                             '%s' % ("\n".join(_acceptable_commands)))
-        elif args.command == "check":
-            status = send_ident(ser)
-            if status[0] is not "ready":
-                print "backend is not ready for operating, exitting now"
-                print "returned status =", status[0]
-                raise Exception("backend is not ready, "
-                                    "aborting operation")
-            else:
-                print "backend is ready!"
-        elif args.command == "dump":
-            f_name = args.outfile
-            if not args.outfile:
-                f_name = datetime.now().isoformat() + ".dump"
+        exec_cmd = {'check': exec_check, 'fdump': exec_fdump}
+        args.outfile = args.outfile or datetime.now().isoformat() + ".%s" % args.command
+        
+        exec_cmd[args.command](**{"args":args, "port":ser})
+        """        elif args.command == "fdump":
+            args.size = 256
+            f_name = args.outfile or datetime.now().isoformat() + ".fdump"
             with open(f_name, "wb") as f:
                 for page in xrange(0, args.size / 2, 1):
-                    status = send_read_page(ser, page)
-                    if status[0] is not "ready":
-                        raise Exception("backend is not ready, "
-                                            "aborting operation")
-                    f.write(status[1])
+                    f.write(send_read_page(ser, page, fastdump=True))
+            print "FDUMP: successfully dumped %d bytes to %s file" % (args.size * 128, f_name)
+        elif args.command == "dump":
+            f_name = args.outfile or datetime.now().isoformat() + ".dump"
+            with open(f_name, "wb") as f:
+                for page in xrange(0, args.size / 2, 1):
+                    f.write(send_read_page(ser, page))
             print "successfully dumped %d bytes to %s file" % (args.size * 128, f_name)
         elif args.command == "burn":
             f_name = args.infile
@@ -173,11 +219,11 @@ if __name__ == "__main__":
             with open(f_name, "rb") as f:
                 for page in xrange(0, args.size / 2, 1):
                     f_data = f.read(256)
-                    status = send_write_page(ser, page, f_data)
-                    if status[0] is not "ready":
-                        raise Exception("backend is not ready, "
-                                            "aborting operation")
+                    send_write_page(ser, page, f_data)
             print "successfully burnt %d bytes from %s file to eprom" % (args.size * 128, f_name)
+        """
     except Exception as e:
         print e
         exit(-1)
+    else:
+        exit(0)
