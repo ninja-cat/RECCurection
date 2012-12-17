@@ -53,6 +53,28 @@ MCU = ATMEGA32A
 #define SET_A18_HI SET_FLG(PORTD, PIN_A18)
 #define SET_A18_LO UNSET_FLG(PORTD, PIN_A18)
 
+#define PIN_PRG_A07_LE (0)
+#define PIN_PRG_A814_LE (1)
+#define PIN_DIR_PRG (2)
+#define PIN_OE_PRG (3)
+#define PIN_CE_PRG (4)
+
+#define SET_PRG_A07_LE_HI SET_FLG(PORTB, PIN_PRG_A07_LE)
+#define SET_PRG_A07_LE_LO UNSET_FLG(PORTB, PIN_PRG_A07_LE)
+
+#define SET_PRG_A814_LE_HI SET_FLG(PORTB, PIN_PRG_A814_LE)
+#define SET_PRG_A814_LE_LO UNSET_FLG(PORTB, PIN_PRG_A814_LE)
+
+#define SET_PRG_DATA_READ UNSET_FLG(PORTB, PIN_DIR_PRG)
+#define SET_PRG_DATA_WRITE SET_FLG(PORTB, PIN_DIR_PRG)
+
+#define SET_PRG_DATA_OE_HI SET_FLG(PORTB, PIN_OE_PRG)
+#define SET_PRG_DATA_OE_LO UNSET_FLG(PORTB, PIN_OE_PRG)
+
+#define SET_PRG_CE_HI SET_FLG(PORTB, PIN_CE_PRG)
+#define SET_PRG_CE_LO UNSET_FLG(PORTB, PIN_CE_PRG)
+
+
 uchar ident[] PROGMEM = "RECCurection eprom-burner backend v0.1";
 
 static uchar accepted_cmd;
@@ -108,6 +130,56 @@ void _set_addr_hi(uchar page_l, uchar page_h){
     }
 }
 
+void _cmd_fast_dump(){
+    // read (ep)rom page
+    uchar i;
+    uint crc_r = 0xffff;
+    PORTC = 0x00;
+    DDRC = 0x00;
+
+    SET_PRG_CE_HI;
+    SET_PRG_DATA_OE_HI;
+    SET_PRG_A07_LE_HI;
+    SET_PRG_A814_LE_HI;
+    SET_PRG_DATA_READ;
+    DDRC = 0xff;
+    PORTC = rx_buf[0];
+    nop();
+    SET_PRG_A814_LE_LO;
+    memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
+
+    // read the memory page
+    for (i = 0; ; i ++){
+        DDRC = 0xff;
+        SET_PRG_A07_LE_HI;
+        PORTC = i;
+        SET_PRG_A07_LE_LO;
+        SET_PRG_CE_LO;
+        PORTC = 0x00;
+        DDRC = 0x00;
+        SET_PRG_DATA_OE_LO;
+        _delay_us(1);    
+        rx_buf[i] = PINC;
+        SET_PRG_DATA_OE_HI;
+        SET_PRG_CE_HI;
+        crc_r = _crc16_update(crc_r, rx_buf[i]);
+        if (i == 0xff){
+            break;
+        }
+    }
+    PORTC = 0x00;
+    DDRC = 0x00;
+    // send the memory page
+    for (i = 0; ; i ++){
+        _send_byte(rx_buf[i]);
+        if (i == 0xff){
+            break;
+        }
+    }
+    _send_byte( ((char *) &crc_r)[0]);
+    _send_byte( ((char *) &crc_r)[1]);
+}
+
 void _cmd_read(){
     // read (ep)rom page
     uchar i;
@@ -145,7 +217,6 @@ void _cmd_write(){
     // write eprom page
     uchar i;
     uint crc_r = 0xffff;
-    uchar *page_buf = rx_buf + 2;
     SET_CE_HI;
     SET_OE_HI;
     SET_PGM_HI;
@@ -154,12 +225,13 @@ void _cmd_write(){
     for (i = 0; ; i ++){
         // set A0-A7
         PORTA = i;
-        PORTC = page_buf[i];
+        PORTC = rx_buf[i + 2];
         SET_CE_LO;
         _delay_us(5);    
         SET_PGM_LO;
         _delay_us(100);
-        SET_PGM_HI;    
+        SET_PGM_HI;
+        _delay_us(5);    
         if (i == 0xff){
             SET_CE_HI;
             break;
@@ -211,6 +283,14 @@ ISR (USART_RXC_vect){
                 accepted_cmd = 1;
                 memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
                 run_cmd = _cmd_identify;
+                break;
+            case 'f':
+                // 'fast_dump' PRG page
+                max_rx_len = PAGE_LEN + CRC16_LEN;
+                count_rx = 0;
+                accepted_cmd = 1;
+                memset(rx_buf, 0, PAGE_LEN + PAGE_SIZE + CRC16_LEN);
+                run_cmd = _cmd_fast_dump;
                 break;
             case 'r':
                 // 'read' (ep)rom page
