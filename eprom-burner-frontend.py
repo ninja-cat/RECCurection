@@ -9,28 +9,41 @@ import serial
 
 
 class MyException(Exception):
+    def __init__(self):
+        self.msg = "BWA-HA-HA-HA-H"
+
     def __str__(self):
-        pass
+        if 'data' in self.cmd:
+            self.cmd.pop('data')
+        if 'raw_data' in self.cmd:
+            self.cmd.pop('raw_data')
+        return "\nFAILURE REASON: %s\n\ncmd: %s" % (self.msg, self.cmd)
+
 
 class NoResponseError(MyException):
-    def __str__(self):
-        return repr("Timeout: no response from backend") 
+    def __init__(self):
+        self.msg = "Timeout: no response from backend"
+
 
 class NotEnoughDataReceived(MyException):
-    def __str__(self):
-        return repr("Received data length differs from expected") 
+    def __init__(self, resp_len, exp_len):
+        self.msg = "Received data len={%d}, but expected len={%d}" % (resp_len,
+                                                                      exp_len)
+
 
 class CorruptedDataReceived(MyException):
-    def __str__(self):
-        return repr("Corrupted data received") 
+    def __init__(self):
+        self.msg = "Corrupted data received"
+
 
 class CorruptedDataTransmitted(MyException):
-    def __str__(self):
-        return repr("Corrupted data transmitted") 
+    def __init__(self):
+        self.msg = "Corrupted data transmitted"
+
 
 class UnacceptableReply(MyException):
-    def __str__(self):
-        return repr("Unacceptable reply from backend") 
+    def __init__(self):
+        self.msg = "Unacceptable reply from backend"
 
 
 _crc16_table = (
@@ -81,7 +94,7 @@ def port_read(port, len_t):
     if not response:
         raise NoResponseError()
     if len(response) != len_t:
-        raise NotEnoughDataReceived()
+        raise NotEnoughDataReceived(len(response), len_t)
     if crc16_calc(response[:-2]) != response[-2:]:
         raise CorruptedDataReceived()
     return response
@@ -91,13 +104,23 @@ def port_write(port, data):
     port.write(data)
 
 
+def exception_wrap(f):
+    def wrapped(cmd):
+        try:
+            return f(cmd)
+        except Exception as e:
+            e.cmd = cmd
+            raise e
+    return wrapped
+
+
+@exception_wrap
 def issue_cmd(cmd):
     format_cmd(cmd)
     port_write(cmd['port'], cmd['raw_data'])
-    respons = port_read(cmd['port'], 3) # ack_size = 3
+    respons = port_read(cmd['port'], 3)  # ack_size = 3
     if respons[0] == 'a':
         # command was accepted
-        #print "backend accepted %s command" % cmd_name
         return port_read(cmd['port'], cmd['resp_len'])[:-2]
     elif respons[0] == 'e':
         # bad_crc
@@ -122,33 +145,17 @@ def format_cmd(cmd):
     return cmd
 
 
-def exec_check(**kwargs):
-    cmd = kwargs['cmd']
-    issue_cmd(cmd)
-    print "backend is ready!"
-
-
-def exec_fdump(**kwargs):
-    args = kwargs['args']
-    cmd = kwargs['cmd']
-    args.size = 256
-    f_name = args.outfile
-    with open(f_name, "wb") as f:
-        for page in xrange(0, args.size / 2, 1):
-            cmd['page'] = page
-            f.write(issue_cmd(cmd))
-    print "FDUMP: successful: dumped %d bytes to %s file" % (os.path.getsize(f_name), f_name)
-
-
 def exec_dump(**kwargs):
     args = kwargs['args']
     cmd = kwargs['cmd']
+    if cmd['opcode'] == 'f':
+        args.size = 256
     f_name = args.outfile
     with open(f_name, "wb") as f:
         for page in xrange(0, args.size / 2, 1):
             cmd['page'] = page
             f.write(issue_cmd(cmd))
-    print "DUMP: successful: dumped %d bytes to %s file" % (os.path.getsize(f_name), f_name)
+    return {'file': f_name, 'done': 'to'}
 
 
 def exec_burn(**kwargs):
@@ -159,25 +166,34 @@ def exec_burn(**kwargs):
         raise Exception("input file is not specified, use \'-i\' option")
     if args.size * 128 != os.path.getsize(f_name):
         raise Exception("input file and rom size mismatch! "
-                        "file size = %d, rom size = %d" % (os.path.getsize(f_name), args.size * 128))
+              "file size = %d, rom size = %d" % (os.path.getsize(f_name),
+                                                            args.size * 128))
     with open(f_name, "rb") as f:
         for page in xrange(0, args.size / 2, 1):
             cmd['page'] = page
             cmd['data'] = f.read(256)
             issue_cmd(cmd)
-    print "BURN: successful: burnt %d bytes from %s file to eprom" % (args.size * 128, f_name)
+    return {'file': f_name, 'done': 'from'}
 
 
 if __name__ == "__main__":
 
-    _acpt_cmds = ('dump', 'burn', 'check', 'fdump')
+    def nop(**noop):
+        pass
+
+    _cmds = {
+            'dump': exec_dump,
+            'fdump': exec_dump,
+            'burn': exec_burn,
+            'check': nop,
+            }
 
     def get_argparser():
         parser = argparse.ArgumentParser(
                 description='EPROM dumper/burner CLI frontend tool',
                 epilog='http://github.com/ninja-cat/RECCurection')
         parser.add_argument('command',
-                            help='command to send: [%s]' % ", ".join(_acpt_cmds))
+                            help='command: [%s]' % ", ".join(_cmds.keys()))
         parser.add_argument('-O', dest='outfile', nargs='?',
                             help='output file')
         parser.add_argument('-i', dest='infile', nargs='?',
@@ -196,26 +212,32 @@ if __name__ == "__main__":
 
     args = get_argparser().parse_args()
 
-    print args 
+    print args
     try:
         ser = serial.Serial(port=args.serial_name,
                         baudrate=args.baudrate, bytesize=8,
                         parity='N', stopbits=1, timeout=0.5,
                         xonxoff=0, rtscts=0)
         cmd = args.command
-        if cmd not in _acpt_cmds:
+        if cmd not in _cmds.keys():
             raise Exception('acceptable commands are:\n'
-                            '%s' % ("\n".join(_acpt_cmds)))
+                            '%s' % ("\n".join(_cmds.keys())))
         cmd_packets = {
                         'check': {'opcode': 'i', 'resp_len': 40},
                         'dump': {'opcode': 'r', 'resp_len': 256 + 2},
-                        'fdump': {'opcode': 'r', 'resp_len': 256 + 2},
+                        'fdump': {'opcode': 'f', 'resp_len': 256 + 2},
                         'burn': {'opcode': 'w', 'resp_len': 4 + 2},
-                      }                            
+                      }
         args.outfile = args.outfile or datetime.now().isoformat() + ".%s" % cmd
         cmd_data = cmd_packets[cmd]
         cmd_data['port'] = ser
-        eval("exec_%s" % cmd)(**{"args":args, "cmd":cmd_data})
+        check_cmd = cmd_packets['check']
+        check_cmd['port'] = ser
+        print "ready! got response: '%s'" % issue_cmd(**{"cmd": check_cmd})
+        strs = _cmds[cmd](**{"args": args, "cmd": cmd_data})
+        if strs:
+            print "%s: successful: %sed %d bytes %s %s file" % (cmd.upper(),
+                cmd, os.path.getsize(strs['file']), strs['done'], strs['file'])
     except Exception as e:
         print e
         exit(-1)
