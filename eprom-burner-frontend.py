@@ -89,6 +89,210 @@ def crc16_calc(data):
     return chr(crc & 0xFF) + chr(crc >> 8)
 
 
+op_types = {
+    'imm': {"len": 2, "fmt": "%s #$%02X"},
+    'zp': {"len": 2, "fmt": "%s $%02X"},
+    'zpx': {"len": 2, "fmt": "%s $%02X,X"},
+    'zpy': {"len": 2, "fmt": "%s $%02X,Y"},
+    'ab': {"len": 3, "fmt": "%s $%02X%02X"},
+    'abx': {"len": 3, "fmt": "%s $%02X%02X,X"},
+    'aby': {"len": 3, "fmt": "%s $%02X%02X,Y"},
+    'in': {"len": 3, "fmt": "%s ($%02X%02X)"},
+    'inx': {"len": 2, "fmt": "%s ($%02X,X)"},
+    'iny': {"len": 2, "fmt": "%s ($%02X),Y"},
+    'imp': {"len": 1, "fmt": "%s"},
+    'br': {"len": 2, "fmt": "%s $%04X"},
+    }
+
+ops = {
+    '??': {'str': '???', 'type': 'imp'},
+    '69': {'str': 'ADC', 'type': 'imm'},
+    '65': {'str': 'ADC', 'type': 'zp'},
+    '75': {'str': 'ADC', 'type': 'zpx'},
+    '6D': {'str': 'ADC', 'type': 'ab'},
+    '7D': {'str': 'ADC', 'type': 'abx'},
+    '79': {'str': 'ADC', 'type': 'aby'},
+    '61': {'str': 'ADC', 'type': 'inx'},
+    '71': {'str': 'ADC', 'type': 'iny'},
+    '29': {'str': 'AND', 'type': 'imm'},
+    '25': {'str': 'AND', 'type': 'zp'},
+    '35': {'str': 'AND', 'type': 'zpx'},
+    '2D': {'str': 'AND', 'type': 'ab'},
+    '3D': {'str': 'AND', 'type': 'abx'},
+    '39': {'str': 'AND', 'type': 'aby'},
+    '21': {'str': 'AND', 'type': 'inx'},
+    '31': {'str': 'AND', 'type': 'iny'},
+    '0A': {'str': 'ASL A', 'type': 'imp'},
+    '06': {'str': 'ASL', 'type': 'zp'},
+    '16': {'str': 'ASL', 'type': 'zpx'},
+    '0E': {'str': 'ASL', 'type': 'ab'},
+    '1E': {'str': 'ASL', 'type': 'abx'},
+    '24': {'str': 'BIT', 'type': 'zp'},
+    '2C': {'str': 'BIT', 'type': 'ab'},
+    '10': {'str': 'BPL', 'type': 'br'},
+    '30': {'str': 'BMI', 'type': 'br'},
+    '50': {'str': 'BVC', 'type': 'br'},
+    '70': {'str': 'BVS', 'type': 'br'},
+    '90': {'str': 'BCC', 'type': 'br'},
+    'B0': {'str': 'BCS', 'type': 'br'},
+    'D0': {'str': 'BNE', 'type': 'br'},
+    'F0': {'str': 'BEQ', 'type': 'br'},
+    '00': {'str': 'BRK', 'type': 'imp'},
+    'C9': {'str': 'CMP', 'type': 'imm'},
+    'C5': {'str': 'CMP', 'type': 'zp'},
+    'D5': {'str': 'CMP', 'type': 'zpx'},
+    'CD': {'str': 'CMP', 'type': 'ab'},
+    'DD': {'str': 'CMP', 'type': 'abx'},
+    'D9': {'str': 'CMP', 'type': 'aby'},
+    'C1': {'str': 'CMP', 'type': 'inx'},
+    'D1': {'str': 'CMP', 'type': 'iny'},
+    'E0': {'str': 'CPX', 'type': 'imm'},
+    'E4': {'str': 'CPX', 'type': 'zp'},
+    'EC': {'str': 'CPX', 'type': 'ab'},
+    'C0': {'str': 'CPY', 'type': 'imm'},
+    'C4': {'str': 'CPY', 'type': 'zp'},
+    'CC': {'str': 'CPY', 'type': 'ab'},
+    'C6': {'str': 'DEC', 'type': 'zp'},
+    'D6': {'str': 'DEC', 'type': 'zpx'},
+    'CE': {'str': 'DEC', 'type': 'ab'},
+    'DE': {'str': 'DEC', 'type': 'abx'},
+    '49': {'str': 'EOR', 'type': 'imm'},
+    '45': {'str': 'EOR', 'type': 'zp'},
+    '55': {'str': 'EOR', 'type': 'zpx'},
+    '4D': {'str': 'EOR', 'type': 'ab'},
+    '5D': {'str': 'EOR', 'type': 'abx'},
+    '59': {'str': 'EOR', 'type': 'aby'},
+    '41': {'str': 'EOR', 'type': 'inx'},
+    '51': {'str': 'EOR', 'type': 'iny'},
+    '18': {'str': 'CLC', 'type': 'imp'},
+    '38': {'str': 'SEC', 'type': 'imp'},
+    '58': {'str': 'CLI', 'type': 'imp'},
+    '78': {'str': 'SEI', 'type': 'imp'},
+    'B8': {'str': 'CLV', 'type': 'imp'},
+    'D8': {'str': 'CLD', 'type': 'imp'},
+    'F8': {'str': 'SED', 'type': 'imp'},
+    'E6': {'str': 'INC', 'type': 'zp'},
+    'F6': {'str': 'INC', 'type': 'zpx'},
+    'EE': {'str': 'INC', 'type': 'ab'},
+    'FE': {'str': 'INC', 'type': 'abx'},
+    '4C': {'str': 'JMP', 'type': 'ab'},
+    '6C': {'str': 'JMP', 'type': 'in'},
+    '20': {'str': 'JSR', 'type': 'ab'},
+    'A9': {'str': 'LDA', 'type': 'imm'},
+    'A5': {'str': 'LDA', 'type': 'zp'},
+    'B5': {'str': 'LDA', 'type': 'zpx'},
+    'AD': {'str': 'LDA', 'type': 'ab'},
+    'BD': {'str': 'LDA', 'type': 'abx'},
+    'B9': {'str': 'LDA', 'type': 'aby'},
+    'A1': {'str': 'LDA', 'type': 'inx'},
+    'B1': {'str': 'LDA', 'type': 'iny'},
+    'A2': {'str': 'LDX', 'type': 'imm'},
+    'A6': {'str': 'LDX', 'type': 'zp'},
+    'B6': {'str': 'LDX', 'type': 'zpy'},
+    'AE': {'str': 'LDX', 'type': 'ab'},
+    'BE': {'str': 'LDX', 'type': 'aby'},
+    'A0': {'str': 'LDY', 'type': 'imm'},
+    'A4': {'str': 'LDY', 'type': 'zp'},
+    'B4': {'str': 'LDY', 'type': 'zpx'},
+    'AC': {'str': 'LDY', 'type': 'ab'},
+    'BC': {'str': 'LDY', 'type': 'abx'},
+    '4A': {'str': 'LSR A', 'type': 'imp'},
+    '46': {'str': 'LSR', 'type': 'zp'},
+    '56': {'str': 'LSR', 'type': 'zpx'},
+    '4E': {'str': 'LSR', 'type': 'ab'},
+    '5E': {'str': 'LSR', 'type': 'abx'},
+    'EA': {'str': 'NOP', 'type': 'imp'},
+    '09': {'str': 'ORA', 'type': 'imm'},
+    '05': {'str': 'ORA', 'type': 'zp'},
+    '15': {'str': 'ORA', 'type': 'zpx'},
+    '0D': {'str': 'ORA', 'type': 'ab'},
+    '1D': {'str': 'ORA', 'type': 'abx'},
+    '19': {'str': 'ORA', 'type': 'aby'},
+    '01': {'str': 'ORA', 'type': 'inx'},
+    '11': {'str': 'ORA', 'type': 'iny'},
+    'AA': {'str': 'TAX', 'type': 'imp'},
+    '8A': {'str': 'TXA', 'type': 'imp'},
+    'CA': {'str': 'DEX', 'type': 'imp'},
+    'E8': {'str': 'INX', 'type': 'imp'},
+    'A8': {'str': 'TAY', 'type': 'imp'},
+    '98': {'str': 'TYA', 'type': 'imp'},
+    '88': {'str': 'DEY', 'type': 'imp'},
+    'C8': {'str': 'INY', 'type': 'imp'},
+    '2A': {'str': 'ROL A', 'type': 'imp'},
+    '26': {'str': 'ROL', 'type': 'zp'},
+    '36': {'str': 'ROL', 'type': 'zpx'},
+    '2E': {'str': 'ROL', 'type': 'ab'},
+    '3E': {'str': 'ROL', 'type': 'abx'},
+    '6A': {'str': 'ROR A', 'type': 'imp'},
+    '66': {'str': 'ROR', 'type': 'zp'},
+    '76': {'str': 'ROR', 'type': 'zpx'},
+    '6E': {'str': 'ROR', 'type': 'ab'},
+    '7E': {'str': 'ROR', 'type': 'abx'},
+    '40': {'str': 'RTI', 'type': 'imp'},
+    '60': {'str': 'RTS', 'type': 'imp'},
+    'E9': {'str': 'SBC', 'type': 'imm'},
+    'E5': {'str': 'SBC', 'type': 'zp'},
+    'F5': {'str': 'SBC', 'type': 'zpx'},
+    'ED': {'str': 'SBC', 'type': 'ab'},
+    'FD': {'str': 'SBC', 'type': 'abx'},
+    'F9': {'str': 'SBC', 'type': 'aby'},
+    'E1': {'str': 'SBC', 'type': 'inx'},
+    'F1': {'str': 'SBC', 'type': 'iny'},
+    '85': {'str': 'STA', 'type': 'zp'},
+    '95': {'str': 'STA', 'type': 'zpx'},
+    '8D': {'str': 'STA', 'type': 'ab'},
+    '9D': {'str': 'STA', 'type': 'abx'},
+    '99': {'str': 'STA', 'type': 'aby'},
+    '81': {'str': 'STA', 'type': 'inx'},
+    '91': {'str': 'STA', 'type': 'iny'},
+    '9A': {'str': 'TXS', 'type': 'imp'},
+    'BA': {'str': 'TSX', 'type': 'imp'},
+    '48': {'str': 'PHA', 'type': 'imp'},
+    '68': {'str': 'PLA', 'type': 'imp'},
+    '08': {'str': 'PHP', 'type': 'imp'},
+    '28': {'str': 'PLP', 'type': 'imp'},
+    '86': {'str': 'STX', 'type': 'zp'},
+    '96': {'str': 'STX', 'type': 'zpy'},
+    '8E': {'str': 'STX', 'type': 'ab'},
+    '84': {'str': 'STY', 'type': 'zp'},
+    '94': {'str': 'STY', 'type': 'zpx'},
+    '8C': {'str': 'STY', 'type': 'ab'},
+    }
+
+
+def to_signed(byte):
+    return ((byte + 128) & 0xff) - 128
+
+
+def dis_asm(f_name):
+    with open(f_name, "rb") as f:
+        data = f.read()
+        #import pdb; pdb.set_trace()
+        off_s = 0x8000
+        pc = off_s
+        while pc < 0xfffa:
+            cur = pc - off_s
+            h_op = "%02X" % ord(data[cur])
+            params = [pc]
+            byte = h_op
+            if h_op not in ops:
+                h_op = '??'
+            o_type = ops[h_op]['type']
+            ln = op_types[o_type]['len']
+            params.append(byte + ' %02X' * (ln - 1) % tuple(map(ord,
+                                                    data[cur + 1: cur + ln]))
+                               + ' ' * (3 - ln) * 3)
+            params.append(ops[h_op]['str'])
+            if o_type == 'br':
+                params.append(pc + ln + to_signed(ord(data[cur + 1])))
+            else:
+                for yy in reversed(range(1, ln)):
+                    params.append(ord(data[cur + yy]))
+            ss = "%04X: %s | " + op_types[o_type]['fmt']
+            print ss % tuple(params)
+            pc += ln
+
+
 def port_read(port, len_t):
     response = port.read(len_t)
     if not response:
@@ -209,6 +413,8 @@ if __name__ == "__main__":
                             help='USART baud rate. E.g. 38400')
 
         return parser
+    dis_asm('newrom.prg')
+    exit(0)
 
     args = get_argparser().parse_args()
 
