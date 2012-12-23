@@ -13,10 +13,8 @@ class MyException(Exception):
         self.msg = "BWA-HA-HA-HA-H"
 
     def __str__(self):
-        if 'data' in self.cmd:
-            self.cmd.pop('data')
-        if 'raw_data' in self.cmd:
-            self.cmd.pop('raw_data')
+        filter_list = ['data', 'raw_data']
+        map(self.cmd.pop, filter(lambda x: x in self.cmd, filter_list))
         return "\nFAILURE REASON: %s\n\ncmd: %s" % (self.msg, self.cmd)
 
 
@@ -80,13 +78,6 @@ _crc16_table = (
     0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040,
 )
-
-
-def crc16_calc(data):
-    crc = 0xFFFF
-    for i in xrange(0, len(data), 1):
-        crc = (crc >> 8) ^ _crc16_table[(crc & 0xFF) ^ ord(data[i])]
-    return chr(crc & 0xFF) + chr(crc >> 8)
 
 
 op_types = {
@@ -260,11 +251,22 @@ ops = {
     }
 
 
-def to_signed(byte):
-    return ((byte + 128) & 0xff) - 128
+cmd_packets = {
+                'check': {'opcode': 'i', 'resp_len': 40},
+                'dump': {'opcode': 'r', 'resp_len': 256 + 2},
+                'fdump': {'opcode': 'f', 'resp_len': 256 + 2},
+                'burn': {'opcode': 'w', 'resp_len': 4 + 2},
+              }
 
 
-def dis_asm(f_name):
+def dis_asm(**kwargs):
+    def _to_signed(byte):
+        return ((byte + 128) & 0xff) - 128
+
+    args = kwargs['args']
+    f_name = args.infile
+    if not args.infile:
+        raise Exception("input file is not specified, use \'-i\' option")
     with open(f_name, "rb") as f:
         data = f.read()
         #import pdb; pdb.set_trace()
@@ -284,48 +286,70 @@ def dis_asm(f_name):
                                + ' ' * (3 - ln) * 3)
             params.append(ops[h_op]['str'])
             if o_type == 'br':
-                params.append(pc + ln + to_signed(ord(data[cur + 1])))
+                params.append(pc + ln + _to_signed(ord(data[cur + 1])))
             else:
                 for yy in reversed(range(1, ln)):
                     params.append(ord(data[cur + yy]))
             ss = "%04X: %s | " + op_types[o_type]['fmt']
             print ss % tuple(params)
             pc += ln
-
-
-def port_read(port, len_t):
-    response = port.read(len_t)
-    if not response:
-        raise NoResponseError()
-    if len(response) != len_t:
-        raise NotEnoughDataReceived(len(response), len_t)
-    if crc16_calc(response[:-2]) != response[-2:]:
-        raise CorruptedDataReceived()
-    return response
-
-
-def port_write(port, data):
-    port.write(data)
+        pc = 0xfffa
+        for zz in ('NMI', 'RST', 'IRQ'):
+            print "%04X: %s %02X%02X" % (pc, zz, ord(data[pc - off_s + 1]),
+                                                        ord(data[pc - off_s]))
+            pc += 2
 
 
 def exception_wrap(f):
-    def wrapped(cmd):
+    def _wrapped(cmd):
         try:
             return f(cmd)
         except Exception as e:
             e.cmd = cmd
             raise e
-    return wrapped
+    return _wrapped
 
 
 @exception_wrap
 def issue_cmd(cmd):
-    format_cmd(cmd)
-    port_write(cmd['port'], cmd['raw_data'])
-    respons = port_read(cmd['port'], 3)  # ack_size = 3
+    def _crc16_calc(data):
+        crc = 0xFFFF
+        for i in xrange(0, len(data), 1):
+            crc = (crc >> 8) ^ _crc16_table[(crc & 0xFF) ^ ord(data[i])]
+        return chr(crc & 0xFF) + chr(crc >> 8)
+
+    def _port_read(port, len_t):
+        response = port.read(len_t)
+        if not response:
+            raise NoResponseError()
+        if len(response) != len_t:
+            raise NotEnoughDataReceived(len(response), len_t)
+        if _crc16_calc(response[:-2]) != response[-2:]:
+            raise CorruptedDataReceived()
+        return response
+
+    def _port_write(port, data):
+        port.write(data)
+
+    def _format_cmd(cmd):
+        # cmd {'opcode': XX, 'param': YY, 'data': ZZ}
+        data = cmd['opcode']
+        if 'param' in cmd:
+            data += cmd['param']
+        if 'page' in cmd:
+            data += chr(cmd['page'] & 0xFF) + chr(cmd['page'] >> 8)
+        if 'data' in cmd:
+            data += cmd['data']
+        data += _crc16_calc(data)
+        cmd['raw_data'] = data
+        return cmd
+
+    _format_cmd(cmd)
+    _port_write(cmd['port'], cmd['raw_data'])
+    respons = _port_read(cmd['port'], 3)  # ack_size = 3
     if respons[0] == 'a':
         # command was accepted
-        return port_read(cmd['port'], cmd['resp_len'])[:-2]
+        return _port_read(cmd['port'], cmd['resp_len'])[:-2]
     elif respons[0] == 'e':
         # bad_crc
         print "bad crc transmitted to backend"
@@ -335,20 +359,19 @@ def issue_cmd(cmd):
         raise UnacceptableReply()
 
 
-def format_cmd(cmd):
-    # cmd {'opcode': XX, 'param': YY, 'data': ZZ}
-    data = cmd['opcode']
-    if 'param' in cmd:
-        data += cmd['param']
-    if 'page' in cmd:
-        data += chr(cmd['page'] & 0xFF) + chr(cmd['page'] >> 8)
-    if 'data' in cmd:
-        data += cmd['data']
-    data += crc16_calc(data)
-    cmd['raw_data'] = data
-    return cmd
+def check_backend(f):
+    def _wrapped(**kwargs):
+        try:
+            check_cmd = cmd_packets['check']
+            check_cmd['port'] = kwargs['cmd']['port']
+            print "ready! got response: '%s'" % issue_cmd(**{"cmd": check_cmd})
+            return f(**kwargs)
+        except Exception as e:
+            raise e
+    return _wrapped
 
 
+@check_backend
 def exec_dump(**kwargs):
     args = kwargs['args']
     cmd = kwargs['cmd']
@@ -362,6 +385,7 @@ def exec_dump(**kwargs):
     return {'file': f_name, 'done': 'to'}
 
 
+@check_backend
 def exec_burn(**kwargs):
     args = kwargs['args']
     cmd = kwargs['cmd']
@@ -382,21 +406,24 @@ def exec_burn(**kwargs):
 
 if __name__ == "__main__":
 
-    def nop(**noop):
+    @check_backend
+    def _nop(**noop):
         pass
 
     _cmds = {
             'dump': exec_dump,
             'fdump': exec_dump,
             'burn': exec_burn,
-            'check': nop,
+            'check': _nop,
+            'dis': dis_asm,
             }
 
-    def get_argparser():
+    def _get_argparser():
         parser = argparse.ArgumentParser(
                 description='EPROM dumper/burner CLI frontend tool',
                 epilog='http://github.com/ninja-cat/RECCurection')
         parser.add_argument('command',
+                            choices=_cmds.keys(),
                             help='command: [%s]' % ", ".join(_cmds.keys()))
         parser.add_argument('-O', dest='outfile', nargs='?',
                             help='output file')
@@ -413,10 +440,8 @@ if __name__ == "__main__":
                             help='USART baud rate. E.g. 38400')
 
         return parser
-    dis_asm('newrom.prg')
-    exit(0)
 
-    args = get_argparser().parse_args()
+    args = _get_argparser().parse_args()
 
     print args
     try:
@@ -425,21 +450,11 @@ if __name__ == "__main__":
                         parity='N', stopbits=1, timeout=0.5,
                         xonxoff=0, rtscts=0)
         cmd = args.command
-        if cmd not in _cmds.keys():
-            raise Exception('acceptable commands are:\n'
-                            '%s' % ("\n".join(_cmds.keys())))
-        cmd_packets = {
-                        'check': {'opcode': 'i', 'resp_len': 40},
-                        'dump': {'opcode': 'r', 'resp_len': 256 + 2},
-                        'fdump': {'opcode': 'f', 'resp_len': 256 + 2},
-                        'burn': {'opcode': 'w', 'resp_len': 4 + 2},
-                      }
         args.outfile = args.outfile or datetime.now().isoformat() + ".%s" % cmd
-        cmd_data = cmd_packets[cmd]
+        cmd_data = {}
+        if cmd in cmd_packets:
+            cmd_data = cmd_packets[cmd]
         cmd_data['port'] = ser
-        check_cmd = cmd_packets['check']
-        check_cmd['port'] = ser
-        print "ready! got response: '%s'" % issue_cmd(**{"cmd": check_cmd})
         strs = _cmds[cmd](**{"args": args, "cmd": cmd_data})
         if strs:
             print "%s: successful: %sed %d bytes %s %s file" % (cmd.upper(),
